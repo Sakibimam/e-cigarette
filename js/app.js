@@ -41,6 +41,7 @@ const app = {
   hudCharge: 0,
   // what is actually held in your lungs — survives dropping the cigarette
   lung: { charge: 0, type: CIG_TYPES[0] },
+  blowT: 0,
   fps: 0
 };
 
@@ -318,7 +319,8 @@ function knockAsh (cig, msg) {
       grow: 1.5 * S,
       life: 0.85 + Math.random() * 0.7,
       alpha: 0.5 + Math.random() * 0.35,
-      rise: -190 * S, swirl: 7 * S, drag: 0.9,
+      rise: -900 * S, swirl: 10 * S,
+      drag: 0.99, drag2: 0.003, thin: 0.45, fieldScale: S,
       tint: Math.random() < 0.4 ? '#4a4643' : '#8d8880'
     });
   }
@@ -327,7 +329,8 @@ function knockAsh (cig, msg) {
     x: p.x, y: p.y, count: Math.round(5 + amount * 6), scaleCount: false,
     jitter: 5 * S, dir: Math.PI / 2, spread: 1.1,
     speed: 26 * S, size: 5 * S, grow: 20 * S,
-    life: 1.5, alpha: 0.16, rise: 4 * S, swirl: 22 * S, drag: 0.6,
+    life: 1.5, alpha: 0.3, rise: 4 * S, swirl: 40 * S,
+    drag: 0.95, drag2: 0.006, thin: 1.0, fieldScale: S,
     tint: '#b8b2aa'
   });
 
@@ -507,9 +510,10 @@ function step (dt) {
           count: 1, scaleCount: false, jitter: 2.5 * app.S,
           dir: -Math.PI / 2 + (Math.random() - 0.5) * 0.5,
           spread: 0.25,
-          speed: 24 * app.S, size: 3.5 * app.S, grow: 10 * app.S,
-          life: 2.8, alpha: 0.11 + cig.drawGlow * 0.1,
-          rise: 52 * app.S, swirl: 30 * app.S, drag: 0.8,
+          speed: 24 * app.S, size: 3.2 * app.S, grow: 13 * app.S,
+          life: 3.0, alpha: (0.11 + cig.drawGlow * 0.1) * 2.1,
+          rise: 52 * app.S, swirl: 46 * app.S,
+          drag: 0.96, drag2: 0.004, thin: 0.85, laminar: 0.75, fieldScale: app.S,
           tint: t.tint
         });
       }
@@ -525,28 +529,35 @@ function step (dt) {
     if (blowing) {
       const power = clamp(openOver);
       anyExhale = power;
+      app.blowT += dt;
+      // you blow hardest at the start: a fast narrow jet that decays into a
+      // slow, wide, buoyant plume as your lungs empty
+      const jet = Math.exp(-app.blowT * 1.5);
       const drain = Math.min(app.lung.charge, dt * (0.5 + power * 0.9));
       app.lung.charge -= drain;
       app.exhaling += t.puffCount * drain * 3.2 * (0.5 + power) * opt.density;
       while (app.exhaling >= 1) {
         app.exhaling -= 1;
-        const dir = Math.PI / 2 + m.roll * 0.7 + (Math.random() - 0.5) * 0.55;
+        const spread = 0.26 + (1 - jet) * 0.48;
+        const dir = Math.PI / 2 + m.roll * 0.7;
         smoke.emit({
           x: m.x + Math.cos(dir) * m.r * 0.25,
           y: m.y + m.r * 0.16 + Math.sin(dir) * m.r * 0.25,
           count: 1, scaleCount: false,
-          jitter: m.r * 0.2,
-          dir, spread: 0.5,
-          speed: t.puffSpeed * 0.42 * app.S * (0.45 + power * 0.85),
-          size: t.puffSize * 0.8 * app.S,
-          grow: t.puffSize * 1.45 * app.S,
-          life: t.puffLife, alpha: t.alpha * 0.8 * (0.5 + power * 0.6),
-          rise: 62 * app.S, swirl: 21 * app.S, drag: 0.72,
+          jitter: m.r * 0.3,
+          dir, spread,
+          speed: t.puffSpeed * app.S * (0.5 + power * 0.7) * (0.45 + jet * 0.9),
+          size: t.puffSize * 1.1 * app.S,
+          grow: t.puffSize * 1.35 * app.S,
+          life: t.puffLife, alpha: t.alpha * 0.85 * (0.5 + power * 0.6),
+          rise: 74 * app.S, swirl: 58 * app.S,
+          drag: 0.95, drag2: 0.006, thin: 0.9, fieldScale: app.S,
           tint: t.tint
         });
       }
     } else {
       app.exhaling = 0;
+      app.blowT = 0;
     }
   }
 

@@ -100,9 +100,21 @@ so the keyboard controls still do something visible.
   CPU fallback). Exposes mirrored, normalised landmarks plus derived gestures: pinch
   strength with hysteresis, mouth centre and radius, head roll, and `suck` / `open` built
   from the `mouthPucker`, `mouthFunnel`, `cheekPuff` and `jawOpen` blendshapes.
-- `js/smoke.js` — soft-sprite particle system. Four pre-rendered irregular puff sprites per
-  smoke colour, buoyancy that grows with particle age, two-frequency curl turbulence,
-  exponential drag, fast fade-in / slow fade-out. Capped at 1100 live particles.
+- `js/smoke.js` — soft-sprite particle system with physics that tries to behave like real
+  smoke rather than just drifting:
+  - **turbulence belongs to the air, not the particle.** Eddies are sampled from a smooth
+    curl field by *position*, so particles close together get almost the same push and the
+    cloud folds and swirls instead of each puff jittering independently.
+  - **quadratic drag**, the way air actually resists. A fast jet stalls hard while slow
+    smoke keeps drifting, so the leading edge of an exhale piles up and mushrooms.
+  - **opacity tracks density.** The same smoke spread over a bigger puff is thinner smoke,
+    so alpha falls as the puff expands rather than fading on a timer.
+  - **buoyancy fades as the puff grows**, because expansion is what entrainment — and so
+    cooling — looks like. Old smoke levels off and drifts instead of climbing forever.
+  - **exhales are jets first, plumes second**: fast and narrow at the start, slowing and
+    widening as your lungs empty. The handover happens on its own, about a second in.
+  - smoke leaving the coal stays laminar for its first stretch before it breaks up.
+  Capped at 1100 live particles.
 - `js/cigarettes.js` — the three types and the canvas drawing: gradient paper, speckled
   filter, brand band, scorch mark, cracked ash and a radial coal that brightens as you draw.
 - `js/app.js` — the state machine (`held` → `docked` → `dropped`), the tray, the lung

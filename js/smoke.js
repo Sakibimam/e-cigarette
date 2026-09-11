@@ -3,6 +3,26 @@
 const TAU = Math.PI * 2;
 const rnd = (a, b) => a + Math.random() * (b - a);
 
+/* ---------------------------------------------------------------- eddies
+   Turbulence has to be a property of the AIR, not of each particle: real
+   smoke swirls because neighbouring parcels sit in the same eddy. Sampling a
+   smooth field by position gives that coherence — two particles close
+   together get almost the same push, so the cloud folds and curls instead of
+   fizzing. The field is the curl of a sum of sinusoids, which makes it
+   (near enough) divergence free, so it stirs the smoke without compressing it. */
+const F1 = 0.0062, F2 = 0.0165;
+const RATIO = F2 / F1;
+
+function curlAt (x, y, t, s, out) {
+  const a = x * F1 / s + t * 0.30;
+  const b = y * F1 / s - t * 0.21;
+  const c = x * F2 / s - t * 0.17;
+  const d = y * F2 / s + t * 0.26;
+  out.x = -Math.sin(a) * Math.sin(b) + 0.35 * RATIO * Math.cos(c) * Math.cos(d);
+  out.y = -Math.cos(a) * Math.cos(b) + 0.35 * RATIO * Math.sin(c) * Math.sin(d);
+}
+const _curl = { x: 0, y: 0 };
+
 function makePuff (size, tint) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -76,7 +96,7 @@ export class SmokeSystem {
         y: o.y + rnd(-1, 1) * (o.jitter ?? 3),
         vx: Math.cos(dir) * sp + (o.vx0 || 0),
         vy: Math.sin(dir) * sp + (o.vy0 || 0),
-        size: (o.size ?? 16) * rnd(0.7, 1.3),
+        size: 0, size0: 0,
         grow: (o.grow ?? 26) * rnd(0.7, 1.4),
         life, max: life,
         rot: Math.random() * TAU,
@@ -84,10 +104,15 @@ export class SmokeSystem {
         alpha: (o.alpha ?? 0.5) * rnd(0.65, 1.15),
         rise: o.rise ?? 26,
         drag: o.drag ?? 0.72,
-        seed: Math.random() * 100,
-        swirl: o.swirl ?? 18,
+        swirl: o.swirl ?? 45,
+        drag2: (o.drag2 ?? 0.008) / (o.fieldScale ?? 1),
+        fieldScale: o.fieldScale ?? 1,
+        laminar: o.laminar ?? 0,
+        thin: o.thin ?? 1.15,
         img: set[(Math.random() * set.length) | 0]
       });
+      const np = this.particles[this.particles.length - 1];
+      np.size = np.size0 = (o.size ?? 16) * rnd(0.7, 1.3);
     }
   }
 
@@ -100,21 +125,34 @@ export class SmokeSystem {
       if (p.life <= 0) { list.splice(i, 1); continue; }
 
       const age = 1 - p.life / p.max;
-      // curl-ish turbulence: two out-of-phase sines per axis
-      const w = this.t * 1.6 + p.seed;
-      const nx = Math.sin(w) * 0.6 + Math.sin(w * 2.3 + 1.7) * 0.4;
-      const ny = Math.cos(w * 1.27 + 0.8) * 0.6 + Math.sin(w * 3.1) * 0.4;
+      const alive = p.max - p.life;
 
-      p.vx += (nx * p.swirl + this.wind) * dt;
-      p.vy += (ny * p.swirl * 0.5 - p.rise * (0.35 + age)) * dt;
+      // eddies sampled from the air, so nearby particles swirl together
+      curlAt(p.x, p.y, this.t, p.fieldScale, _curl);
+      // smoke leaving a coal rises as a smooth thread before it breaks up,
+      // so hold the turbulence off for the first stretch of its life
+      const turb = p.laminar > 0 ? Math.min(1, alive / p.laminar) ** 2 : 1;
 
-      const damp = Math.pow(p.drag, dt);
+      // Buoyancy is driven by how much warmer the smoke is than the room, and
+      // a puff cools as it entrains air — which is exactly what its expansion
+      // measures. So lift fades as the puff grows, and old smoke levels off
+      // and drifts instead of climbing forever.
+      const warmth = Math.sqrt(p.size0 / p.size);
+      p.vx += (_curl.x * p.swirl * turb + this.wind) * dt;
+      p.vy += (_curl.y * p.swirl * turb - p.rise * (0.35 + age) * warmth) * dt;
+
+      // Quadratic drag, the way air actually resists: a fast jet stalls
+      // hard while slow drifting smoke keeps going. That difference is what
+      // makes an exhale pile up and mushroom at its leading edge.
+      const sp = Math.hypot(p.vx, p.vy);
+      const damp = Math.pow(p.drag, dt) / (1 + p.drag2 * sp * dt);
       p.vx *= damp;
       p.vy *= damp;
 
       p.x += p.vx * dt;
       p.y += p.vy * dt;
-      p.size += p.grow * dt;
+      // entrainment slows as the puff grows and its edge velocity drops
+      p.size += p.grow * Math.max(0.18, 1 - age * 0.8) * dt;
       p.rot += p.spin * dt;
     }
   }
@@ -125,7 +163,10 @@ export class SmokeSystem {
       const age = 1 - p.life / p.max;
       // fade in fast, out slow
       const fade = age < 0.14 ? age / 0.14 : Math.pow(1 - (age - 0.14) / 0.86, 1.5);
-      const a = p.alpha * fade;
+      // the same smoke spread over a bigger puff is thinner smoke: opacity
+      // tracks density rather than being a free-floating fade
+      const dens = Math.pow(p.size0 / p.size, p.thin);
+      const a = p.alpha * fade * dens;
       if (a <= 0.004) continue;
       ctx.globalAlpha = a;
       ctx.translate(p.x, p.y);
