@@ -61,7 +61,7 @@ function makePuff (size, tint) {
 }
 
 export class SmokeSystem {
-  constructor (max = 900) {
+  constructor (max = 1800) {
     this.max = max;
     this.particles = [];
     this.sprites = new Map();

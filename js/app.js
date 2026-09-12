@@ -20,12 +20,12 @@ const layer = document.createElement('canvas');
 const layerCtx = layer.getContext('2d');
 
 const vision = new Vision();
-const smoke = new SmokeSystem(1100);
+const smoke = new SmokeSystem(1900);
 
 const opt = {
   grip: 0.1,
   occlude: true,
-  density: 1.2,
+  density: 1.9,
   sens: 0.22,
   skeleton: false,
   mirror: true
@@ -619,9 +619,9 @@ function step (dt) {
           count: 1, scaleCount: false, jitter: 2.5 * app.Sc,
           dir: -Math.PI / 2 + (Math.random() - 0.5) * 0.5,
           spread: 0.25,
-          speed: 24 * app.Sc, size: 3.2 * app.Sc, grow: 13 * app.Sc,
+          speed: 24 * app.Sc, size: 3.6 * app.Sc, grow: 15 * app.Sc,
           life: 3.0,
-          alpha: (0.11 + cig.drawGlow * 0.1) * 2.1 * (0.55 + app.lum * 0.6),
+          alpha: (0.13 + cig.drawGlow * 0.13) * 2.4 * (0.55 + app.lum * 0.6),
           rise: 52 * app.Sc, swirl: 46 * app.Sc,
           drag: 0.96, drag2: 0.004, thin: 0.85, laminar: 0.75, fieldScale: app.Sc,
           tint: litTint(t.tint)

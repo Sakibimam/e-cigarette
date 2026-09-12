@@ -188,27 +188,42 @@ export class Vision {
          as the pinch. Thumb to index, index to middle, thumb to pinky — they
          all work, and the cigarette is taken at that exact point, so it does
          not matter which way your hand came in. */
+      const straight = f => dist(lm[TIPS[f]], lm[WRIST]) > dist(lm[PIPS[f]], lm[WRIST]) * 1.06;
+      let extended = 0;
+      for (let f = 0; f < TIPS.length; f++) if (straight(f)) extended++;
+      const curled = tip => { const f = TIPS.indexOf(tip); return f >= 0 && !straight(f); };
+
+      /* Fingers curled into the palm put their tips almost on top of each
+         other — a ring and little finger folded out of the way read as the
+         tightest pinch on the hand and would steal the cigarette off the two
+         fingers actually holding it. A folded finger is not pinching
+         anything, so weight those pairs right down. */
       let pinchGap = Infinity, fa = THUMB_TIP, fb = INDEX_TIP;
       for (let i = 0; i < FINGERTIPS.length; i++) {
         for (let j = i + 1; j < FINGERTIPS.length; j++) {
           const a = FINGERTIPS[i], b = FINGERTIPS[j];
           let d = dist3(lm[a], lm[b]) / span;
+          // two fingers folded into the palm are not pinching anything, ever
+          if (curled(a) && curled(b)) continue;
           if (NEIGHBOURS.has(a + ',' + b)) d *= 1.55;
+          if (curled(a) || curled(b)) d *= 1.7;
           if (d < pinchGap) { pinchGap = d; fa = a; fb = b; }
         }
       }
-
-      const straight = f => dist(lm[TIPS[f]], lm[WRIST]) > dist(lm[PIPS[f]], lm[WRIST]) * 1.06;
-      let extended = 0;
-      for (let f = 0; f < TIPS.length; f++) if (straight(f)) extended++;
 
       /* The scissor hold: index and middle straight out with the cigarette
          clamped between them. It is how most people hold one, and it wants
          its own handling — the cigarette does not sit at the fingertips but
          further back between the fingers, and it points along them rather
          than away from the wrist. */
+      /* What separates this from an open hand is not how close the two
+         fingers are — a cigarette between them holds them apart — but that
+         the ring and little finger are folded away. All four straight is an
+         open hand; these two out with the others tucked in is the hold. */
       const vGap = dist3(lm[INDEX_TIP], lm[MIDDLE_TIP]) / span;
-      const scissor = straight(0) && straight(1) && vGap < 0.42 + this.pinchEase;
+      const scissor = straight(0) && straight(1) &&
+                      !(straight(2) && straight(3)) &&
+                      vGap < 1.4 + this.pinchEase;
 
       /* Hysteresis, so a held pinch does not flicker. A splayed hand should
          not stay latched on through it — but the override has to check the

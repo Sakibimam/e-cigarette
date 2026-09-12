@@ -14,8 +14,8 @@ export const CIG_TYPES = [
     burnRate: 0.016,        // fraction of the stick per second while drawing
     idleBurn: 0.0035,
     tint: '#e9e9ee',
-    puffCount: 46, puffSize: 21, puffSpeed: 540, puffLife: 4.2, alpha: 0.40,
-    wispRate: 7
+    puffCount: 64, puffSize: 23, puffSpeed: 540, puffLife: 4.8, alpha: 0.48,
+    wispRate: 11
   },
   {
     id: 'menthol',
@@ -28,8 +28,8 @@ export const CIG_TYPES = [
     burnRate: 0.014,
     idleBurn: 0.003,
     tint: '#d8f2ff',
-    puffCount: 42, puffSize: 18, puffSpeed: 620, puffLife: 3.6, alpha: 0.35,
-    wispRate: 6
+    puffCount: 58, puffSize: 20, puffSpeed: 620, puffLife: 4.1, alpha: 0.42,
+    wispRate: 10
   },
   {
     id: 'cigar',
@@ -42,8 +42,8 @@ export const CIG_TYPES = [
     burnRate: 0.009,
     idleBurn: 0.002,
     tint: '#d6cdbf',
-    puffCount: 54, puffSize: 27, puffSpeed: 410, puffLife: 5.2, alpha: 0.45,
-    wispRate: 9
+    puffCount: 76, puffSize: 29, puffSpeed: 410, puffLife: 6.0, alpha: 0.54,
+    wispRate: 14
   },
   {
     id: 'bidi',
@@ -58,8 +58,8 @@ export const CIG_TYPES = [
     burnRate: 0.030,                   // goes down fast
     idleBurn: 0.009,                   // and keeps burning if you leave it
     tint: '#e0d4b8',                   // pungent, faintly yellow
-    puffCount: 48, puffSize: 21, puffSpeed: 500, puffLife: 4.1, alpha: 0.42,
-    wispRate: 11,
+    puffCount: 66, puffSize: 23, puffSpeed: 500, puffLife: 4.7, alpha: 0.50,
+    wispRate: 15,
     ashRate: 0.34                      // crumbles quicker than a cigarette
   }
 ];

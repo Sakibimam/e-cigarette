@@ -107,8 +107,14 @@ cigarette. Hold those two straight out with the rest of your hand closed and it 
 a scissor grip: the cigarette is placed back between your fingers at the knuckles rather
 than out at the tips, and it lies **along** your fingers instead of drooping out of them —
 because there, the fingers are doing the holding, not gravity. Only one pinched at the
-fingertips hangs. Middle-and-ring and ring-and-pinky still have to close further than the
-rest, since nobody means those.
+fingertips hangs.
+
+What separates that from an open hand is not how close those two fingers are — a cigarette
+between them holds them apart — but whether your ring and little fingers are folded away.
+All four straight is an open hand; two out with the others tucked in is the hold. And a
+pair of fingers curled into your palm sit almost on top of each other, which would otherwise
+read as the tightest pinch on your hand and steal the cigarette off the two fingers actually
+holding it, so pairs where both fingers are folded are ignored outright.
 
 A **ring marks the spot** the app is watching, tightening and turning amber as your fingers
 come together. If the cigarette will not come out, look at where that ring actually is
@@ -167,7 +173,8 @@ with crimson thread at the wide end. It also crumbles into ash faster than the r
 
 Settings are behind the **⚙** in the top right:
 
-- **Smoke density** — particles per puff (turn it down if your machine struggles)
+- **Smoke density** — particles per puff (turn it down if your machine struggles; a full
+  exhale is around 560 particles at the default, and it still runs at 60fps with 1500)
 - **Lip threshold** — how hard you have to purse your lips before it counts as a draw.
   Lower = easier. Raise it if the ember flares while you talk.
 - **Grip forgiveness** — how close two fingertips have to be before it counts. Raise it if
