@@ -3,7 +3,6 @@
 
 import { Vision, HAND_BONES } from './vision.js';
 import { SmokeSystem } from './smoke.js';
-import { Sound } from './audio.js';
 import { CIG_TYPES, MAX_LEN, drawCigarette, cigTip, cigLength, cigDrawLength, roundRect } from './cigarettes.js';
 
 const $ = id => document.getElementById(id);
@@ -21,11 +20,9 @@ const layerCtx = layer.getContext('2d');
 
 const vision = new Vision();
 const smoke = new SmokeSystem(1100);
-const sound = new Sound();
 
 const opt = {
   grip: 0.1,
-  sound: true,
   occlude: true,
   density: 1.2,
   sens: 0.22,
@@ -69,7 +66,7 @@ const app = {
   t: 0, last: 0,
   cigs: [],
   nextId: 1,
-  prevPinch: {},              // holderId -> was pinching
+  grabCool: {},               // holderId -> seconds until it can grab again
   pointer: { down: false, x: 0, y: 0, px: 0, py: 0 },
   keys: { suck: false, open: false },
   tray: [],
@@ -105,7 +102,7 @@ function drawTray (dt) {
     const bob = Math.sin(app.t * 1.3 + slot.i * 1.9) * 5 * S;
     const tilt = Math.sin(app.t * 0.8 + slot.i * 2.4) * 0.06;
     const near = nearestPinchDist(slot.x, slot.y);
-    const hot = clamp(1 - near / slot.r);
+    const hot = clamp(1 - near / (slot.r * 1.45));
     app.flash[slot.i] = Math.max(0, app.flash[slot.i] - dt * 2.4);
     const flash = app.flash[slot.i];
 
@@ -188,8 +185,10 @@ function holders (dt) {
       id: 'h:' + h.side,
       x: p.x, y: p.y,
       angle: Math.atan2(p.y - w.y, p.x - w.x),
-      pinching: h.gripping ?? h.pinching,
+      pinching: h.pinching,               // two fingers deliberately together
+      holding: h.gripping ?? h.pinching,   // that, or simply a hand not open
       strength: h.pinchStrength,
+      fingers: h.fingers,
       open: h.open ?? 0,
       tip: toPx(h.indexTip)
     });
@@ -200,6 +199,7 @@ function holders (dt) {
       x: app.pointer.x, y: app.pointer.y,
       angle: app.pointer.angle ?? -0.5,
       pinching: app.pointer.down,
+      holding: app.pointer.down,
       strength: app.pointer.down ? 1 : 0,
       open: app.pointer.down ? 0 : 1,
       tip: { x: app.pointer.x, y: app.pointer.y }
@@ -351,7 +351,6 @@ function knockAsh (cig, msg) {
   const p = ashPoint(cig);
   const amount = cig.ash;
   const S = app.Sc;
-  sound.tick();
 
   // the clump breaks off and falls
   for (let i = 0; i < Math.round(9 + amount * 16); i++) {
@@ -410,11 +409,17 @@ function ashGestures () {
 
 /* ------------------------------------------------------------ gestures */
 
-function handleGrabs (m) {
+/* Reaching for one used to need a clean open-to-pinched transition in exactly
+   the right place, which is a lot to ask of a hand tracker. Now it is a dwell:
+   come in from any direction with any two fingers together, and if there is
+   something under them you get it. A short cooldown afterwards stops one
+   gesture emptying the whole tray. */
+function handleGrabs (m, dt) {
   for (const h of app.holders) {
-    const was = app.prevPinch[h.id] || false;
-    app.prevPinch[h.id] = h.pinching;
-    if (h.pinching && !was) {
+    app.grabCool[h.id] = Math.max(0, (app.grabCool[h.id] || 0) - dt);
+    if (!h.pinching || app.grabCool[h.id] > 0) continue;
+    if (app.cigs.some(c => c.state === 'held' && c.holderId === h.id)) continue;
+    {
       // 1. pick an existing cigarette back up (docked or free)
       let picked = null, bestD = 1e9;
       for (const c of app.cigs) {
@@ -423,11 +428,13 @@ function handleGrabs (m) {
         // catch than a short fat one
         const d = Math.min(distToCig(c, h.x, h.y),
                            h.tip ? distToCig(c, h.tip.x, h.tip.y) : 1e9);
-        if (d < Math.max(62 * app.S, m.r * 0.8) && d < bestD) { bestD = d; picked = c; }
+        if (d < Math.max(78 * app.Sc, m.r * 0.95) && d < bestD) { bestD = d; picked = c; }
       }
       if (picked) {
         picked.state = 'held';
         picked.holderId = h.id;
+        picked.grip = GRIP_GRACE;
+        app.grabCool[h.id] = 0.65;
         toast('picked it back up');
         continue;
       }
@@ -435,11 +442,11 @@ function handleGrabs (m) {
       for (const slot of app.tray) {
         const reach = Math.min(dist(h.x, h.y, slot.x, slot.y),
                                h.tip ? dist(h.tip.x, h.tip.y, slot.x, slot.y) : 1e9);
-        if (reach < slot.r * 1.2) {
+        if (reach < slot.r * 1.45) {
           const c = spawnCig(slot.type, h);
           if (c) {
             app.flash[slot.i] = 1;
-            if (opt.sound) sound.light();
+            app.grabCool[h.id] = 0.65;
             toast(`${slot.type.name} — bring it to your lips`);
           } else {
             toast('both hands full');
@@ -456,6 +463,7 @@ const GRIP_GRACE = 0.34;
 
 function releaseCig (cig, m, why) {
   cig.grip = GRIP_GRACE;
+  if (cig.holderId) app.grabCool[cig.holderId] = 0.6;
   const nearMouth = m.real && dist(cig.x, cig.y, m.x, m.y) < m.r * 1.25;
   if (nearMouth) {
     cig.state = 'docked';
@@ -497,7 +505,7 @@ function step (dt) {
     }
   }
   app.holders = holders(dt);
-  handleGrabs(m);
+  handleGrabs(m, dt);
   ashGestures();
 
   let anyInhale = 0, anyExhale = 0;
@@ -528,9 +536,9 @@ function step (dt) {
         if (cig.grip <= 0) releaseCig(cig, m, 'lost');
       } else {
         placeHeld(cig, h, dt);
-        if (h.open >= 0.72) {
+        if (h.open >= 0.72 && !h.pinching) {
           releaseCig(cig, m, 'open');
-        } else if (h.pinching) {
+        } else if (h.holding) {
           cig.grip = GRIP_GRACE;
         } else {
           cig.grip -= dt;
@@ -697,12 +705,6 @@ function step (dt) {
     .map(h => ({ x: h.x, y: h.y, vx: h.vx * 0.75, vy: h.vy * 0.75, r: 130 * app.Sc })));
   smoke.update(dt);
 
-  if (opt.sound) {
-    const hot = app.cigs.reduce((a, c) => Math.max(a, c.state === 'dropped' ? 0 : c.ember), 0);
-    sound.draw(anyInhale > 0.02 ? anyInhale : hot * 0.12, dt);
-    if (anyExhale > 0.02) sound.blow(anyExhale); else sound.quiet();
-  }
-
   updateHud(anyInhale, anyExhale, m);
 }
 
@@ -743,6 +745,7 @@ function render (dt) {
   }
 
   drawTray(dt);
+  drawGrabPoints();
 
   if (opt.skeleton) drawTracking();
 
@@ -791,6 +794,39 @@ function render (dt) {
     ctx.globalCompositeOperation = 'lighter';
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(tip.x, tip.y, R, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* You cannot aim at something you cannot see. This marks the exact point
+   between the two fingers the tracker has picked out, so it is obvious where
+   the cigarette will be taken from and how close to pinched your hand reads. */
+function drawGrabPoints () {
+  const S = app.S;
+  for (const h of app.holders) {
+    if (h.id === 'ptr') continue;
+    const busy = app.cigs.some(c => c.state === 'held' && c.holderId === h.id);
+    if (busy) continue;
+    const k = clamp(h.strength);
+    const r = (10 + (1 - k) * 26) * S;
+    ctx.save();
+    ctx.lineWidth = (1.4 + k * 1.6) * S;
+    ctx.strokeStyle = h.pinching
+      ? `rgba(255,168,86,${0.5 + k * 0.45})`
+      : `rgba(226,230,255,${0.16 + k * 0.3})`;
+    ctx.beginPath(); ctx.arc(h.x, h.y, r, 0, TAU); ctx.stroke();
+    if (h.pinching) {
+      ctx.fillStyle = 'rgba(255,150,60,.16)';
+      ctx.beginPath(); ctx.arc(h.x, h.y, r, 0, TAU); ctx.fill();
+    }
+    ctx.fillStyle = `rgba(255,255,255,${0.35 + k * 0.5})`;
+    ctx.beginPath(); ctx.arc(h.x, h.y, 2.4 * S, 0, TAU); ctx.fill();
+    if (opt.skeleton && h.fingers) {
+      ctx.fillStyle = 'rgba(255,255,255,.6)';
+      ctx.font = `${Math.round(11 * S)}px ui-sans-serif,system-ui,sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(h.fingers, h.x, h.y - r - 7 * S);
+    }
     ctx.restore();
   }
 }
@@ -958,7 +994,6 @@ $('panelToggle').onclick = () => $('panelBody').classList.toggle('open');
 $('optDensity').oninput = e => { opt.density = +e.target.value; };
 $('optSens').oninput = e => { opt.sens = +e.target.value; };
 $('optGrip').oninput = e => { opt.grip = +e.target.value; vision.pinchEase = opt.grip; };
-$('optSound').onchange = e => { opt.sound = e.target.checked; sound.setMuted(!opt.sound); };
 $('optOcclude').onchange = e => { opt.occlude = e.target.checked; };
 $('optSkeleton').onchange = e => { opt.skeleton = e.target.checked; };
 $('optMirror').onchange = e => { opt.mirror = vision.mirror = e.target.checked; };
@@ -994,9 +1029,6 @@ async function start () {
     vision.mirror = opt.mirror;
     vision.pinchEase = opt.grip;
 
-    sound.start();
-    sound.setMuted(!opt.sound);
-
     $('gate').classList.add('hide');
     setTimeout(() => { $('gate').style.display = 'none'; }, 500);
     app.running = true;
@@ -1019,13 +1051,21 @@ function frame (now) {
   app.last = now;
   app.t += dt;
 
-  const res = vision.detect(video, now);
-  app.hands = res.hands || [];
-  app.face = res.face || null;
-  app.mask = opt.occlude ? vision.segment(video, now) : null;
-
-  step(dt);
-  render(dt);
+  /* Whatever goes wrong in a single frame, the next one still has to run.
+     An exception escaping here would skip the requestAnimationFrame below and
+     kill the loop for good — the app would simply freeze, with the camera
+     still on and nothing moving. */
+  try {
+    const res = vision.detect(video, now);
+    app.hands = res.hands || [];
+    app.face = res.face || null;
+    app.mask = opt.occlude ? vision.segment(video, now) : null;
+    step(dt);
+    render(dt);
+  } catch (e) {
+    app.errs = (app.errs || 0) + 1;
+    if (app.errs < 4) console.error('[vapor] frame error', e);
+  }
   requestAnimationFrame(frame);
 }
 
@@ -1034,5 +1074,5 @@ addEventListener('resize', layoutTray);
 layoutTray();
 
 // debugging / kiosk helpers
-window.vapor = { app, opt, smoke, vision, sound, start, toast, litTint, CIG_TYPES };
+window.vapor = { app, opt, smoke, vision, start, toast, litTint, CIG_TYPES };
 if (new URLSearchParams(location.search).has('auto')) start();

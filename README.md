@@ -42,18 +42,30 @@ still exhale the smoke you took in. A cigarette held at your mouth blocks the pl
 have to move it clear first, exactly like the real thing. Smoke the whole thing down and
 it burns to the filter and falls away.
 
-### Holding it
+### Picking one up
 
-Either grip works, because nobody holds a cigarette in a thumb-and-index pinch:
+**Put any two fingertips together and reach in.** Whichever two — thumb and index, index
+and middle, thumb and pinky — the app looks at all ten pairs and takes whichever is closest
+to touching, then hands you the cigarette at that exact point. Which way your hand is
+facing makes no difference; it works at any rotation. Adjacent fingers have to close a
+little further than a thumb-and-finger pair, since they rest close together anyway.
 
-- **pinch** thumb to index, or
-- **just curl your hand** — index and middle out, the rest closed, the way you would round
-  a real one. Two extended fingers or fewer counts as holding.
+A **ring marks the spot** the app is watching, tightening and turning amber as your fingers
+come together. If the cigarette will not come out, look at where that ring actually is
+rather than where you think your fingers are.
 
-Splaying three fingers or more is the one unambiguous "let go", so that drops it instantly.
-The pinch distance is measured in three dimensions, so pointing your hand at the camera no
-longer reads as an open hand. If it still fights you, raise **Grip forgiveness** in the
-settings panel and turn on **Show tracking** to watch what the model actually sees.
+There is no need to time anything. Reach in with your fingers together and whatever is
+under them comes out — from up to 172px off the centre of the card. Simply curling your
+hand keeps hold of one too, so the grip does not depend on keeping a precise pinch while
+you move.
+
+Spreading your hand wide is the one unambiguous "let go" and drops it immediately, except
+at your lips, where it leaves the cigarette hanging there.
+
+Distances are measured in three dimensions, so pointing your hand at the camera no longer
+reads as an open hand. If it still fights you, **Grip forgiveness** in the settings panel
+moves the threshold either way, and **Show tracking** labels which two fingers the model
+thinks are closest.
 
 ### Keeping hold of it
 
@@ -98,9 +110,8 @@ Settings are behind the **⚙** in the top right:
 - **Smoke density** — particles per puff (turn it down if your machine struggles)
 - **Lip threshold** — how hard you have to purse your lips before it counts as a draw.
   Lower = easier. Raise it if the ember flares while you talk.
-- **Grip forgiveness** — how loose a pinch still counts as holding. Raise it if the
-  cigarette will not come out of the tray.
-- **Sound** — the crackle, the breath and the ash tick
+- **Grip forgiveness** — how close two fingertips have to be before it counts. Raise it if
+  cigarettes will not come out, lower it if they jump into your hand unasked.
 - **Smoke passes behind you** — the segmentation mask. Turn it off to save a little work.
 - **Show tracking** — draws the hand skeleton, pinch ring and mouth radius
 - **Mirror camera** — on by default so the picture moves the way you do
@@ -125,10 +136,6 @@ so the keyboard controls still do something visible.
 
 ## Making it sit in the room
 
-- **Sound**, synthesised in WebAudio with no audio files: burning paper is broadband noise
-  with sharp random transients, so crackles are noise bursts through a swept bandpass whose
-  rate and loudness track how hard you are drawing. The exhale is filtered noise shaped by
-  an envelope, and the coal keeps a quiet sizzling bed under it all.
 - **The smoke is lit by your room.** A 48×27 copy of the video frame, sampled four times a
   second, gives the average colour and brightness around you; smoke is tinted toward it and
   dimmed in a dark room. Pure white smoke is the main thing that reads as pasted on. The

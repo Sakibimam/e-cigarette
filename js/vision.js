@@ -16,6 +16,14 @@ const WRIST = 0, THUMB_TIP = 4, INDEX_MCP = 5, INDEX_TIP = 8, MIDDLE_MCP = 9,
 const TIPS = [8, 12, 16, 20];
 const PIPS = [6, 10, 14, 18];
 
+/* Every fingertip, thumb included. A pinch is just any two of these brought
+   together — which two is up to you, and so is which way your hand is facing. */
+const FINGERTIPS = [4, 8, 12, 16, 20];
+const FINGER_NAME = { 4: 'thumb', 8: 'index', 12: 'middle', 16: 'ring', 20: 'pinky' };
+// adjacent fingers rest close together, so they have to close further than a
+// thumb-and-finger pair before it counts as deliberate
+const NEIGHBOURS = new Set(['8,12', '12,16', '16,20']);
+
 export const HAND_BONES = [
   [0,1],[1,2],[2,3],[3,4],
   [0,5],[5,6],[6,7],[7,8],
@@ -146,16 +154,15 @@ export class Vision {
     if (video.currentTime === this.lastTime) return { hands: this.hands, face: this.face };
     this.lastTime = video.currentTime;
 
-    let hr, fr;
     try {
-      hr = this.handLm.detectForVideo(video, tMs);
-      fr = this.faceLm.detectForVideo(video, tMs);
+      const hr = this.handLm.detectForVideo(video, tMs);
+      const fr = this.faceLm.detectForVideo(video, tMs);
+      this.hands = this._readHands(hr);
+      this.face = this._readFace(fr);
     } catch (e) {
-      return { hands: this.hands, face: this.face };
+      // one malformed frame must never take the app down with it
+      if (!this._warned) { console.warn('[vapor] detection frame skipped', e); this._warned = true; }
     }
-
-    this.hands = this._readHands(hr);
-    this.face = this._readFace(fr);
     return { hands: this.hands, face: this.face };
   }
 
@@ -166,6 +173,7 @@ export class Vision {
     const lists = res?.landmarks || [];
     for (let i = 0; i < lists.length; i++) {
       const raw = lists[i];
+      if (!raw || raw.length < 21) continue;
       const lm = raw.map(p => ({ x: this._mx(p.x), y: p.y, z: p.z }));
 
       // handedness is reported for the *camera* image; mirror flips its meaning
@@ -173,16 +181,40 @@ export class Vision {
       if (this.mirror) side = side === 'Right' ? 'Left' : 'Right';
 
       const span = Math.max(0.04, dist3(lm[WRIST], lm[MIDDLE_MCP]));
-      const pinchGap = dist3(lm[THUMB_TIP], lm[INDEX_TIP]) / span;
 
-      // hysteresis so a held pinch does not flicker
+      /* Find whichever two fingertips are closest to touching and treat that
+         as the pinch. Thumb to index, index to middle, thumb to pinky — they
+         all work, and the cigarette is taken at that exact point, so it does
+         not matter which way your hand came in. */
+      let pinchGap = Infinity, fa = THUMB_TIP, fb = INDEX_TIP;
+      for (let i = 0; i < FINGERTIPS.length; i++) {
+        for (let j = i + 1; j < FINGERTIPS.length; j++) {
+          const a = FINGERTIPS[i], b = FINGERTIPS[j];
+          let d = dist3(lm[a], lm[b]) / span;
+          if (NEIGHBOURS.has(a + ',' + b)) d *= 1.55;
+          if (d < pinchGap) { pinchGap = d; fa = a; fb = b; }
+        }
+      }
+
+      let extended = 0;
+      for (let f = 0; f < TIPS.length; f++) {
+        if (dist(lm[TIPS[f]], lm[WRIST]) > dist(lm[PIPS[f]], lm[WRIST]) * 1.06) extended++;
+      }
+
+      /* Hysteresis, so a held pinch does not flicker. A splayed hand should
+         not stay latched on through it — but the override has to check the
+         gap too, because your index finger is extended when you pinch with it,
+         and cancelling on extended fingers alone would kill the commonest
+         pinch there is. */
       const was = this._pinchState.get(side) || false;
-      const eng = 0.52 + this.pinchEase, rel = 0.80 + this.pinchEase;
-      const pinching = was ? pinchGap < rel : pinchGap < eng;
+      const eng = 0.46 + this.pinchEase, rel = 0.70 + this.pinchEase;
+      const splayed = extended >= 4 && pinchGap > eng;
+      const pinching = splayed ? false : (was ? pinchGap < rel : pinchGap < eng);
       this._pinchState.set(side, pinching);
 
-      const px = (lm[THUMB_TIP].x + lm[INDEX_TIP].x) / 2;
-      const py = (lm[THUMB_TIP].y + lm[INDEX_TIP].y) / 2;
+      // the cigarette is taken at the point between those two fingers
+      const px = (lm[fa].x + lm[fb].x) / 2;
+      const py = (lm[fa].y + lm[fb].y) / 2;
 
       // direction the held object should point: away from the wrist
       const ang = Math.atan2(py - lm[WRIST].y, px - lm[WRIST].x);
@@ -190,11 +222,6 @@ export class Vision {
       // A finger is extended when its tip is further from the wrist than its
       // middle knuckle. Counting them is scale free, so it works the same
       // whether your hand is near the camera or far from it.
-      let extended = 0;
-      for (let f = 0; f < TIPS.length; f++) {
-        if (dist(lm[TIPS[f]], lm[WRIST]) > dist(lm[PIPS[f]], lm[WRIST]) * 1.06) extended++;
-      }
-
       /* Nobody holds a cigarette in a thumb-and-index pinch — it sits clamped
          between the index and middle fingers with the rest of the hand curled.
          So either counts as a grip: a real pinch, or a hand that is not open.
@@ -204,15 +231,19 @@ export class Vision {
       // where the cigarette sits in the hand, depending on which grip it is
       const gx = pinching ? px : (lm[6].x + lm[10].x) / 2;
       const gy = pinching ? py : (lm[6].y + lm[10].y) / 2;
+      const fingers = FINGER_NAME[fa] + '+' + FINGER_NAME[fb];
 
       out.push({
         index: i, side, landmarks: lm, span,
         pinch: { x: px, y: py },
         pinchStrength: Math.max(0, Math.min(1,
-          Math.max(1 - (pinchGap - 0.35) / 0.75, gripping ? 0.55 : 0))),
+          Math.max(1 - (pinchGap - 0.2) / (rel - 0.2), gripping ? 0.5 : 0))),
+        pinchGap,
         pinching,
         gripping,
+        fingers,
         grab: { x: gx, y: gy },
+        pinchPoint: { x: px, y: py },
         extended,
         open: extended / TIPS.length,   // 1 = flat open palm
         angle: ang,
