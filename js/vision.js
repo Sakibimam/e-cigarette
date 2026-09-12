@@ -11,6 +11,10 @@ const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmar
 const WRIST = 0, THUMB_TIP = 4, INDEX_MCP = 5, INDEX_TIP = 8, MIDDLE_MCP = 9,
       MIDDLE_TIP = 12, RING_TIP = 16, PINKY_MCP = 17, PINKY_TIP = 20;
 
+// fingertip / middle-knuckle pairs, for telling an open hand from a closed one
+const TIPS = [8, 12, 16, 20];
+const PIPS = [6, 10, 14, 18];
+
 export const HAND_BONES = [
   [0,1],[1,2],[2,3],[3,4],
   [0,5],[5,6],[6,7],[7,8],
@@ -107,11 +111,21 @@ export class Vision {
       // direction the held object should point: away from the wrist
       const ang = Math.atan2(py - lm[WRIST].y, px - lm[WRIST].x);
 
+      // A finger is extended when its tip is further from the wrist than its
+      // middle knuckle. Counting them is scale free, so it works the same
+      // whether your hand is near the camera or far from it.
+      let extended = 0;
+      for (let f = 0; f < TIPS.length; f++) {
+        if (dist(lm[TIPS[f]], lm[WRIST]) > dist(lm[PIPS[f]], lm[WRIST]) * 1.06) extended++;
+      }
+
       out.push({
         index: i, side, landmarks: lm, span,
         pinch: { x: px, y: py },
         pinchStrength: Math.max(0, Math.min(1, 1 - (pinchGap - 0.35) / 0.75)),
         pinching,
+        extended,
+        open: extended / TIPS.length,   // 1 = flat open palm
         angle: ang,
         wrist: lm[WRIST],
         indexTip: lm[INDEX_TIP],

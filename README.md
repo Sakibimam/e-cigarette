@@ -29,6 +29,7 @@ Google's CDN, so it needs a network connection the first time.
 | 3 | **Purse / funnel your lips** while it's at your mouth | the ember flares, the paper burns down, and your lungs fill (`LUNGS` meter) |
 | 4 | Take it **away** from your mouth and **open your mouth** | a plume of smoke pours out of your lips, billows forward and drifts up |
 | 5 | **Release the pinch** at your lips | the cigarette hangs off your lip hands-free — pinch near it again to take it back |
+| 5b | **Spread your hand wide open** | you drop it, wherever you are — the one unambiguous way to let go |
 | 6 | After three or four drags, **flick** your hand down sharply — or **tap** the stick with a finger on your other hand | the ash clump breaks off and falls |
 
 While it sits in your lips the cigarette is drawn foreshortened and angled down out of
@@ -40,6 +41,17 @@ The lungful belongs to *you*, not to the cigarette: you can draw, drop the cigar
 still exhale the smoke you took in. A cigarette held at your mouth blocks the plume — you
 have to move it clear first, exactly like the real thing. Smoke the whole thing down and
 it burns to the filter and falls away.
+
+### Keeping hold of it
+
+Hand tracking blinks. A fast move or a tilted palm loses the hand for a frame or two, and
+the pinch gap flickers across its threshold constantly — so letting go on any single one of
+those frames made a cigarette maddening to hold on to. A grip now has to lapse for a third
+of a second before your fingers actually open, which rides straight over the noise.
+
+Spreading your hand wide is unmistakable, though, so that drops it immediately with no
+wait. Three of your four fingers extended past their middle knuckles counts as open, a test
+that does not care how near the camera your hand is.
 
 ### Ash
 

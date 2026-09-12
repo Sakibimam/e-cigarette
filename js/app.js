@@ -152,6 +152,7 @@ function holders (dt) {
       angle: Math.atan2(p.y - w.y, p.x - w.x),
       pinching: h.pinching,
       strength: h.pinchStrength,
+      open: h.open ?? 0,
       tip: toPx(h.indexTip)
     });
   }
@@ -162,6 +163,7 @@ function holders (dt) {
       angle: app.pointer.angle ?? -0.5,
       pinching: app.pointer.down,
       strength: app.pointer.down ? 1 : 0,
+      open: app.pointer.down ? 0 : 1,
       tip: { x: app.pointer.x, y: app.pointer.y }
     });
   }
@@ -222,7 +224,7 @@ function spawnCig (type, holder) {
     angle: holder.angle,
     scale: app.S,
     burn: 0, ash: 0, ember: 0.35, emberTarget: 0.35,
-    squash: 1, dock: 0, ashHint: 0, ashCool: 0,
+    squash: 1, dock: 0, ashHint: 0, ashCool: 0, grip: GRIP_GRACE,
     alpha: 0, lit: true,
     state: 'held', holderId: holder.id,
     vx: 0, vy: 0, spin: 0,
@@ -373,10 +375,11 @@ function handleGrabs (m) {
       let picked = null, bestD = 1e9;
       for (const c of app.cigs) {
         if (c.state === 'dropped' || c.holderId === h.id) continue;
-        const tip = cigTip(c);
-        const mx = (c.x + tip.x) / 2, my = (c.y + tip.y) / 2;
-        const d = Math.min(dist(h.x, h.y, mx, my), dist(h.x, h.y, c.x, c.y));
-        if (d < Math.max(cigDrawLength(c) * 0.7, m.r * 0.9) && d < bestD) { bestD = d; picked = c; }
+        // distance to the stick itself, so a long thin one is no harder to
+        // catch than a short fat one
+        const d = Math.min(distToCig(c, h.x, h.y),
+                           h.tip ? distToCig(c, h.tip.x, h.tip.y) : 1e9);
+        if (d < Math.max(62 * app.S, m.r * 0.8) && d < bestD) { bestD = d; picked = c; }
       }
       if (picked) {
         picked.state = 'held';
@@ -386,7 +389,9 @@ function handleGrabs (m) {
       }
       // 2. otherwise pull a fresh one from the tray
       for (const slot of app.tray) {
-        if (dist(h.x, h.y, slot.x, slot.y) < slot.r) {
+        const reach = Math.min(dist(h.x, h.y, slot.x, slot.y),
+                               h.tip ? dist(h.tip.x, h.tip.y, slot.x, slot.y) : 1e9);
+        if (reach < slot.r * 1.2) {
           const c = spawnCig(slot.type, h);
           if (c) {
             app.flash[slot.i] = 1;
@@ -401,7 +406,11 @@ function handleGrabs (m) {
   }
 }
 
-function releaseCig (cig, m) {
+/** how long a grip survives lost tracking or a flickering pinch */
+const GRIP_GRACE = 0.34;
+
+function releaseCig (cig, m, why) {
+  cig.grip = GRIP_GRACE;
   const nearMouth = m.real && dist(cig.x, cig.y, m.x, m.y) < m.r * 1.25;
   if (nearMouth) {
     cig.state = 'docked';
@@ -414,6 +423,7 @@ function releaseCig (cig, m) {
     cig.vx = (Math.random() - 0.5) * 90;
     cig.vy = -40;
     cig.spin = (Math.random() - 0.5) * 5;
+    if (why === 'open') toast('let it go');
   }
 }
 
@@ -442,12 +452,25 @@ function step (dt) {
 
     if (cig.state === 'held') {
       const h = holderById(cig.holderId);
+      /* Hand tracking blinks — a fast move or a tilted palm loses the hand for
+         a frame or two, and the pinch gap flickers across its threshold. Letting
+         go on any one of those frames is what made a cigarette so hard to keep
+         hold of, so a lapse has to persist before the fingers actually open.
+         Spreading your hand wide is unambiguous, though, so that releases at
+         once — no waiting. */
       if (!h) {
-        // hand lost from view — let it hang or fall
-        releaseCig(cig, m);
+        cig.grip -= dt;
+        if (cig.grip <= 0) releaseCig(cig, m, 'lost');
       } else {
         placeHeld(cig, h, dt);
-        if (!h.pinching) releaseCig(cig, m);
+        if (h.open >= 0.72 && !h.pinching) {
+          releaseCig(cig, m, 'open');
+        } else if (h.pinching) {
+          cig.grip = GRIP_GRACE;
+        } else {
+          cig.grip -= dt;
+          if (cig.grip <= 0) releaseCig(cig, m, 'slip');
+        }
       }
     } else if (cig.state === 'docked') {
       placeDocked(cig, m, dt);
