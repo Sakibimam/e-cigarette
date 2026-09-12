@@ -17,7 +17,7 @@ or any static server (`python3 -m http.server 8777`). A plain `file://` open wil
 work — ES modules and camera access both require an http(s) origin. `localhost` counts as
 a secure origin; to use it from a phone or another machine you need real HTTPS.
 
-Then press **Enable camera**. First load downloads the two tracking models (~12 MB) from
+Then press **Enable camera**. First load downloads the three tracking models (~15 MB) from
 Google's CDN, so it needs a network connection the first time.
 
 ## How to smoke
@@ -41,6 +41,19 @@ The lungful belongs to *you*, not to the cigarette: you can draw, drop the cigar
 still exhale the smoke you took in. A cigarette held at your mouth blocks the plume — you
 have to move it clear first, exactly like the real thing. Smoke the whole thing down and
 it burns to the filter and falls away.
+
+### Holding it
+
+Either grip works, because nobody holds a cigarette in a thumb-and-index pinch:
+
+- **pinch** thumb to index, or
+- **just curl your hand** — index and middle out, the rest closed, the way you would round
+  a real one. Two extended fingers or fewer counts as holding.
+
+Splaying three fingers or more is the one unambiguous "let go", so that drops it instantly.
+The pinch distance is measured in three dimensions, so pointing your hand at the camera no
+longer reads as an open hand. If it still fights you, raise **Grip forgiveness** in the
+settings panel and turn on **Show tracking** to watch what the model actually sees.
 
 ### Keeping hold of it
 
@@ -85,6 +98,10 @@ Settings are behind the **⚙** in the top right:
 - **Smoke density** — particles per puff (turn it down if your machine struggles)
 - **Lip threshold** — how hard you have to purse your lips before it counts as a draw.
   Lower = easier. Raise it if the ember flares while you talk.
+- **Grip forgiveness** — how loose a pinch still counts as holding. Raise it if the
+  cigarette will not come out of the tray.
+- **Sound** — the crackle, the breath and the ash tick
+- **Smoke passes behind you** — the segmentation mask. Turn it off to save a little work.
 - **Show tracking** — draws the hand skeleton, pinch ring and mouth radius
 - **Mirror camera** — on by default so the picture moves the way you do
 
@@ -105,6 +122,36 @@ If no face is detected the app falls back to a virtual mouth in the middle of th
 so the keyboard controls still do something visible.
 
 `?auto=1` on the URL skips the splash and asks for the camera immediately (kiosk mode).
+
+## Making it sit in the room
+
+- **Sound**, synthesised in WebAudio with no audio files: burning paper is broadband noise
+  with sharp random transients, so crackles are noise bursts through a swept bandpass whose
+  rate and loudness track how hard you are drawing. The exhale is filtered noise shaped by
+  an envelope, and the coal keeps a quiet sizzling bed under it all.
+- **The smoke is lit by your room.** A 48×27 copy of the video frame, sampled four times a
+  second, gives the average colour and brightness around you; smoke is tinted toward it and
+  dimmed in a dark room. Pure white smoke is the main thing that reads as pasted on. The
+  tint is quantised so the sprite cache holds a handful of variants rather than one per
+  frame, and it is capped and evicted besides.
+- **The coal is a light source**, not just a bright dot: a warm falloff thrown onto the
+  video under the cigarette and the smoke, flickering, and flaring as you draw — so your
+  hand and face catch the glow and the smoke drifts through it.
+- **Distance.** Eye separation says how far away you are, so leaning toward the camera
+  grows the cigarette and its smoke instead of leaving a fixed-size sticker on the lens.
+- **Smoke passes behind you.** A selfie segmenter gives your silhouette each frame; smoke
+  that has risen above your head is drawn into its own layer, your outline is punched out
+  of it, and it goes down before everything else. So a plume climbing past your face
+  passes behind it while the one you have just blown stays in front. The mask is sampled
+  on a stride into a quarter-size canvas and only recomputed at 20Hz — walking a million
+  pixels per frame cost more than the whole rest of the app, and the coarser edge blurs
+  into something that looks better anyway.
+- **Your hands stir it.** Sweep a hand through your own cloud and the particles nearby get
+  dragged along with it.
+- **Nose exhale.** Keep your mouth shut on a full chest and it comes out of your nostrils
+  instead, in two thin fast streams.
+- **Head yaw** swings the cigarette in your lips and aims the plume where you are facing,
+  worked out from how your nose sits between your eyes.
 
 ## How it works
 

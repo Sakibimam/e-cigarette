@@ -67,6 +67,7 @@ export class SmokeSystem {
     this.sprites = new Map();
     this.density = 1;
     this.wind = 0;
+    this.stirrers = null;
     this.t = 0;
   }
 
@@ -74,6 +75,12 @@ export class SmokeSystem {
     let set = this.sprites.get(tint);
     if (!set) {
       set = [makePuff(128, tint), makePuff(128, tint), makePuff(128, tint), makePuff(128, tint)];
+      // tints follow the room light, so drop the least recently used rather
+      // than letting the cache grow without bound as the lighting drifts
+      if (this.sprites.size >= 28) this.sprites.delete(this.sprites.keys().next().value);
+      this.sprites.set(tint, set);
+    } else {
+      this.sprites.delete(tint);
       this.sprites.set(tint, set);
     }
     return set;
@@ -116,9 +123,13 @@ export class SmokeSystem {
     }
   }
 
+  /** hands that are allowed to shove the smoke about: [{x,y,vx,vy,r}] */
+  setStirrers (list) { this.stirrers = list; }
+
   update (dt) {
     this.t += dt;
     const list = this.particles;
+    const stir = this.stirrers;
     for (let i = list.length - 1; i >= 0; i--) {
       const p = list[i];
       p.life -= dt;
@@ -149,6 +160,20 @@ export class SmokeSystem {
       p.vx *= damp;
       p.vy *= damp;
 
+      // a hand sweeping through drags the smoke along with it
+      if (stir) {
+        for (let k = 0; k < stir.length; k++) {
+          const h = stir[k];
+          const dx = p.x - h.x, dy = p.y - h.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > h.r * h.r) continue;
+          const fall = 1 - Math.sqrt(d2) / h.r;
+          const k2 = fall * fall * dt * 7;
+          p.vx += (h.vx - p.vx) * Math.min(1, k2);
+          p.vy += (h.vy - p.vy) * Math.min(1, k2);
+        }
+      }
+
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       // entrainment slows as the puff grows and its edge velocity drops
@@ -157,9 +182,15 @@ export class SmokeSystem {
     }
   }
 
-  draw (ctx) {
+  /**
+   * @param filter optional predicate: only particles it accepts are drawn
+   * @param scale  draw at a fraction of full size, for rendering into a
+   *               smaller offscreen layer
+   */
+  draw (ctx, filter, scale = 1) {
     ctx.save();
     for (const p of this.particles) {
+      if (filter && !filter(p)) continue;
       const age = 1 - p.life / p.max;
       // fade in fast, out slow
       const fade = age < 0.14 ? age / 0.14 : Math.pow(1 - (age - 0.14) / 0.86, 1.5);
@@ -169,11 +200,13 @@ export class SmokeSystem {
       const a = p.alpha * fade * dens;
       if (a <= 0.004) continue;
       ctx.globalAlpha = a;
-      ctx.translate(p.x, p.y);
-      ctx.rotate(p.rot);
+      // set the matrix outright rather than translate/rotate/reset, so an
+      // outer scale survives
+      const co = Math.cos(p.rot) * scale, si = Math.sin(p.rot) * scale;
+      ctx.setTransform(co, si, -si, co, p.x * scale, p.y * scale);
       ctx.drawImage(p.img, -p.size, -p.size, p.size * 2, p.size * 2);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.restore();
     ctx.globalAlpha = 1;
   }

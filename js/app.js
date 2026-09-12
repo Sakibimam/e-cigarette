@@ -3,6 +3,7 @@
 
 import { Vision, HAND_BONES } from './vision.js';
 import { SmokeSystem } from './smoke.js';
+import { Sound } from './audio.js';
 import { CIG_TYPES, MAX_LEN, drawCigarette, cigTip, cigLength, cigDrawLength, roundRect } from './cigarettes.js';
 
 const $ = id => document.getElementById(id);
@@ -15,19 +16,56 @@ const video = $('video');
 const canvas = $('scene');
 const ctx = canvas.getContext('2d', { alpha: false });
 
+const layer = document.createElement('canvas');
+const layerCtx = layer.getContext('2d');
+
 const vision = new Vision();
 const smoke = new SmokeSystem(1100);
+const sound = new Sound();
 
 const opt = {
+  grip: 0.1,
+  sound: true,
+  occlude: true,
   density: 1.2,
   sens: 0.22,
   skeleton: false,
   mirror: true
 };
 
+/* ---------------------------------------------------------- room light
+   A tiny copy of the video frame is enough to know what colour the room is.
+   Smoke lit by a warm lamp is warm; pure white smoke is the main thing that
+   reads as pasted on top of the picture rather than being in it. */
+const probe = document.createElement('canvas');
+probe.width = 48; probe.height = 27;
+const probeCtx = probe.getContext('2d', { willReadFrequently: true });
+
+function sampleRoom () {
+  try {
+    probeCtx.drawImage(video, 0, 0, probe.width, probe.height);
+    const d = probeCtx.getImageData(0, 0, probe.width, probe.height).data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+    return { r: r / n, g: g / n, b: b / n };
+  } catch (e) { return null; }
+}
+
+/** blend a smoke colour toward the light in the room, then quantise it so the
+ *  sprite cache holds a handful of variants instead of a new one every frame */
+function litTint (hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const k = 0.42;
+  const q = v => Math.round(Math.min(255, Math.max(0, v)) / 24) * 24;
+  return 'rgb(' + q(lerp((n >> 16) & 255, app.room.r, k)) + ',' +
+                  q(lerp((n >> 8) & 255, app.room.g, k)) + ',' +
+                  q(lerp(n & 255, app.room.b, k)) + ')';
+}
+
 const app = {
   running: false,
-  W: 1280, H: 720, S: 1,
+  W: 1280, H: 720, S: 1, Sc: 1,
+  room: { r: 150, g: 150, b: 150 }, lum: 0.6, roomAt: 0,
   t: 0, last: 0,
   cigs: [],
   nextId: 1,
@@ -41,7 +79,7 @@ const app = {
   hudCharge: 0,
   // what is actually held in your lungs — survives dropping the cigarette
   lung: { charge: 0, type: CIG_TYPES[0] },
-  blowT: 0,
+  blowT: 0, nosing: 0,
   fps: 0
 };
 
@@ -144,13 +182,13 @@ const holderVel = new Map();
 function holders (dt) {
   const list = [];
   for (const h of app.hands) {
-    const p = toPx(h.pinch);
+    const p = toPx(h.grab || h.pinch);
     const w = toPx(h.wrist);
     list.push({
       id: 'h:' + h.side,
       x: p.x, y: p.y,
       angle: Math.atan2(p.y - w.y, p.x - w.x),
-      pinching: h.pinching,
+      pinching: h.gripping ?? h.pinching,
       strength: h.pinchStrength,
       open: h.open ?? 0,
       tip: toPx(h.indexTip)
@@ -197,6 +235,8 @@ function mouthState () {
       y: f.mouth.y * app.H,
       r: Math.max(46, f.scale * app.W * 0.62),
       roll: f.roll,
+      yaw: f.yaw ?? 0,
+      nose: { x: f.nose.x * app.W, y: f.nose.y * app.H },
       suck: app.keys.suck ? 1 : f.suck,
       open: app.keys.open ? 1 : f.open,
       real: true
@@ -206,7 +246,8 @@ function mouthState () {
   return {
     x: app.W * 0.5, y: app.H * 0.62,
     r: Math.min(app.W, app.H) * 0.12,
-    roll: 0,
+    roll: 0, yaw: 0,
+    nose: { x: app.W * 0.5, y: app.H * 0.52 },
     suck: app.keys.suck ? 1 : 0,
     open: app.keys.open ? 1 : 0,
     real: false
@@ -222,7 +263,7 @@ function spawnCig (type, holder) {
     type,
     x: holder.x, y: holder.y,
     angle: holder.angle,
-    scale: app.S,
+    scale: app.Sc,
     burn: 0, ash: 0, ember: 0.35, emberTarget: 0.35,
     squash: 1, dock: 0, ashHint: 0, ashCool: 0, grip: GRIP_GRACE,
     alpha: 0, lit: true,
@@ -256,7 +297,9 @@ const DOCK_SQUASH = 0.46;    // foreshortening from pointing at the lens
 function placeDocked (cig, m, dt) {
   const k = 1 - Math.pow(0.0015, dt);
   const off = cig.dockSide ?? 1;
-  const a = off === 1 ? m.roll + DOCK_TILT : m.roll + Math.PI - DOCK_TILT;
+  // turning your head swings the stick with it and foreshortens it further
+  const swing = (m.yaw ?? 0) * 0.5 * off;
+  const a = off === 1 ? m.roll + DOCK_TILT - swing : m.roll + Math.PI - DOCK_TILT + swing;
   // sit the butt at the lip line, tucked toward the chosen corner
   const cos = Math.cos(m.roll), sin = Math.sin(m.roll);
   const ox = m.r * 0.22 * off, oy = m.r * 0.05;
@@ -307,7 +350,8 @@ function knockAsh (cig, msg) {
   if (cig.ash < 0.12) return false;
   const p = ashPoint(cig);
   const amount = cig.ash;
-  const S = app.S;
+  const S = app.Sc;
+  sound.tick();
 
   // the clump breaks off and falls
   for (let i = 0; i < Math.round(9 + amount * 16); i++) {
@@ -323,7 +367,7 @@ function knockAsh (cig, msg) {
       alpha: 0.5 + Math.random() * 0.35,
       rise: -900 * S, swirl: 10 * S,
       drag: 0.99, drag2: 0.003, thin: 0.45, fieldScale: S,
-      tint: Math.random() < 0.4 ? '#4a4643' : '#8d8880'
+      tint: litTint(Math.random() < 0.4 ? '#4a4643' : '#8d8880')
     });
   }
   // and a little grey dust hangs where it broke
@@ -333,7 +377,7 @@ function knockAsh (cig, msg) {
     speed: 26 * S, size: 5 * S, grow: 20 * S,
     life: 1.5, alpha: 0.3, rise: 4 * S, swirl: 40 * S,
     drag: 0.95, drag2: 0.006, thin: 1.0, fieldScale: S,
-    tint: '#b8b2aa'
+    tint: litTint('#b8b2aa')
   });
 
   cig.ash = 0;
@@ -395,6 +439,7 @@ function handleGrabs (m) {
           const c = spawnCig(slot.type, h);
           if (c) {
             app.flash[slot.i] = 1;
+            if (opt.sound) sound.light();
             toast(`${slot.type.name} — bring it to your lips`);
           } else {
             toast('both hands full');
@@ -431,6 +476,26 @@ function releaseCig (cig, m, why) {
 
 function step (dt) {
   const m = mouthState();
+
+  /* Lean toward the camera and your face grows; the cigarette in your hand
+     has to grow with it or it reads as a sticker on the lens. Eye separation
+     is the yardstick — 0.115 of frame width is roughly arm's length. */
+  const depth = app.face ? clamp(app.face.scale / 0.115, 0.62, 1.9) : 1;
+  app.Sc = lerp(app.Sc, app.S * depth, 1 - Math.pow(0.02, dt));
+
+  // the room's colour changes slowly, so there is no need to look every frame
+  app.roomAt -= dt;
+  if (app.roomAt <= 0) {
+    app.roomAt = 0.25;
+    const c = sampleRoom();
+    if (c) {
+      const k = 0.35;
+      app.room.r = lerp(app.room.r, c.r, k);
+      app.room.g = lerp(app.room.g, c.g, k);
+      app.room.b = lerp(app.room.b, c.b, k);
+      app.lum = clamp((0.2126 * app.room.r + 0.7152 * app.room.g + 0.0722 * app.room.b) / 255, 0.12, 1);
+    }
+  }
   app.holders = holders(dt);
   handleGrabs(m);
   ashGestures();
@@ -441,7 +506,7 @@ function step (dt) {
   for (let i = app.cigs.length - 1; i >= 0; i--) {
     const cig = app.cigs[i];
     const t = cig.type;
-    cig.scale = app.S;
+    cig.scale = app.Sc;
     cig.alpha = Math.min(1, cig.alpha + dt * 5);
 
     // ease between "held in the hand" and "seated in the lips"
@@ -463,7 +528,7 @@ function step (dt) {
         if (cig.grip <= 0) releaseCig(cig, m, 'lost');
       } else {
         placeHeld(cig, h, dt);
-        if (h.open >= 0.72 && !h.pinching) {
+        if (h.open >= 0.72) {
           releaseCig(cig, m, 'open');
         } else if (h.pinching) {
           cig.grip = GRIP_GRACE;
@@ -529,15 +594,16 @@ function step (dt) {
       while (cig.wisp >= 1) {
         cig.wisp -= 1;
         smoke.emit({
-          x: tip.x, y: tip.y - 2 * app.S,
-          count: 1, scaleCount: false, jitter: 2.5 * app.S,
+          x: tip.x, y: tip.y - 2 * app.Sc,
+          count: 1, scaleCount: false, jitter: 2.5 * app.Sc,
           dir: -Math.PI / 2 + (Math.random() - 0.5) * 0.5,
           spread: 0.25,
-          speed: 24 * app.S, size: 3.2 * app.S, grow: 13 * app.S,
-          life: 3.0, alpha: (0.11 + cig.drawGlow * 0.1) * 2.1,
-          rise: 52 * app.S, swirl: 46 * app.S,
-          drag: 0.96, drag2: 0.004, thin: 0.85, laminar: 0.75, fieldScale: app.S,
-          tint: t.tint
+          speed: 24 * app.Sc, size: 3.2 * app.Sc, grow: 13 * app.Sc,
+          life: 3.0,
+          alpha: (0.11 + cig.drawGlow * 0.1) * 2.1 * (0.55 + app.lum * 0.6),
+          rise: 52 * app.Sc, swirl: 46 * app.Sc,
+          drag: 0.96, drag2: 0.004, thin: 0.85, laminar: 0.75, fieldScale: app.Sc,
+          tint: litTint(t.tint)
         });
       }
     }
@@ -562,25 +628,61 @@ function step (dt) {
       while (app.exhaling >= 1) {
         app.exhaling -= 1;
         const spread = 0.26 + (1 - jet) * 0.48;
-        const dir = Math.PI / 2 + m.roll * 0.7;
+        const dir = Math.PI / 2 + m.roll * 0.7 + (m.yaw ?? 0) * 0.55;
         smoke.emit({
           x: m.x + Math.cos(dir) * m.r * 0.25,
           y: m.y + m.r * 0.16 + Math.sin(dir) * m.r * 0.25,
           count: 1, scaleCount: false,
           jitter: m.r * 0.3,
           dir, spread,
-          speed: t.puffSpeed * app.S * (0.5 + power * 0.7) * (0.45 + jet * 0.9),
-          size: t.puffSize * 1.1 * app.S,
-          grow: t.puffSize * 1.35 * app.S,
-          life: t.puffLife, alpha: t.alpha * 0.85 * (0.5 + power * 0.6),
-          rise: 74 * app.S, swirl: 58 * app.S,
-          drag: 0.95, drag2: 0.006, thin: 0.9, fieldScale: app.S,
-          tint: t.tint
+          speed: t.puffSpeed * app.Sc * (0.5 + power * 0.7) * (0.45 + jet * 0.9),
+          size: t.puffSize * 1.1 * app.Sc,
+          grow: t.puffSize * 1.35 * app.Sc,
+          life: t.puffLife,
+          alpha: t.alpha * 0.85 * (0.5 + power * 0.6) * (0.55 + app.lum * 0.6),
+          rise: 74 * app.Sc, swirl: 58 * app.Sc,
+          drag: 0.95, drag2: 0.006, thin: 0.9, fieldScale: app.Sc,
+          tint: litTint(t.tint)
         });
       }
     } else {
       app.exhaling = 0;
       app.blowT = 0;
+    }
+
+    /* Mouth shut on a full chest is how most of it actually comes out: two
+       thin, fast streams straight down from the nostrils. */
+    const noseBlow = !app.cigAtMouth && !blowing && app.lung.charge > 0.12 &&
+                     m.real && m.open < 0.12 && m.suck < 0.2;
+    if (noseBlow) {
+      const drain = Math.min(app.lung.charge, dt * 0.3);
+      app.lung.charge -= drain;
+      app.nosing += t.puffCount * drain * 2.6 * opt.density;
+      const cos = Math.cos(m.roll), sin = Math.sin(m.roll);
+      // nostrils sit between the nose tip and the top lip, a little apart
+      const bx = lerp(m.nose.x, m.x, 0.42), by = lerp(m.nose.y, m.y, 0.42);
+      while (app.nosing >= 1) {
+        app.nosing -= 1;
+        const side = Math.random() < 0.5 ? -1 : 1;
+        const off = m.r * 0.17 * side;
+        const dir = Math.PI / 2 + m.roll * 0.8 + (m.yaw ?? 0) * 0.5 + side * 0.12;
+        smoke.emit({
+          x: bx + cos * off, y: by + sin * off,
+          count: 1, scaleCount: false, jitter: m.r * 0.05,
+          dir, spread: 0.16,
+          speed: t.puffSpeed * 0.55 * app.Sc,
+          size: t.puffSize * 0.42 * app.Sc,
+          grow: t.puffSize * 1.5 * app.Sc,
+          life: t.puffLife * 0.85,
+          alpha: t.alpha * 0.7 * (0.55 + app.lum * 0.6),
+          rise: 60 * app.Sc, swirl: 44 * app.Sc,
+          drag: 0.95, drag2: 0.008, thin: 0.95, laminar: 0.22, fieldScale: app.Sc,
+          tint: litTint(t.tint)
+        });
+      }
+      anyExhale = Math.max(anyExhale, 0.35);
+    } else {
+      app.nosing = 0;
     }
   }
 
@@ -589,7 +691,17 @@ function step (dt) {
   app.hudCharge = app.lung.charge;
   smoke.density = 1;
   smoke.wind = Math.sin(app.t * 0.21) * 5 * app.S;
+  // sweep a hand through your own cloud and it should move
+  smoke.setStirrers(app.holders
+    .filter(h => h.speed > 120 * app.S)
+    .map(h => ({ x: h.x, y: h.y, vx: h.vx * 0.75, vy: h.vy * 0.75, r: 130 * app.Sc })));
   smoke.update(dt);
+
+  if (opt.sound) {
+    const hot = app.cigs.reduce((a, c) => Math.max(a, c.state === 'dropped' ? 0 : c.ember), 0);
+    sound.draw(anyInhale > 0.02 ? anyInhale : hot * 0.12, dt);
+    if (anyExhale > 0.02) sound.blow(anyExhale); else sound.quiet();
+  }
 
   updateHud(anyInhale, anyExhale, m);
 }
@@ -610,6 +722,26 @@ function render (dt) {
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
 
+  /* The coal is a live coal: it should throw light on whatever is near it.
+     Drawn over the video but under the cigarette and the smoke, so your hand
+     and face catch the glow and the smoke drifts through it. */
+  for (const c of app.cigs) {
+    if (c.ember < 0.08) continue;
+    const tip = cigTip(c);
+    const flick = 0.86 + Math.sin(app.t * 17 + c.id * 3) * 0.09 + Math.sin(app.t * 7.3) * 0.05;
+    const heat = c.ember * flick;
+    const R = (90 + c.drawGlow * 150) * app.Sc * (0.7 + heat * 0.6);
+    const g = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, R);
+    g.addColorStop(0, `rgba(255,146,54,${0.3 * heat * (c.alpha ?? 1)})`);
+    g.addColorStop(0.35, `rgba(255,96,18,${0.13 * heat * (c.alpha ?? 1)})`);
+    g.addColorStop(1, 'rgba(255,60,0,0)');
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(tip.x, tip.y, R, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+
   drawTray(dt);
 
   if (opt.skeleton) drawTracking();
@@ -618,7 +750,34 @@ function render (dt) {
 
   for (const c of app.cigs) drawAshHint(c);
 
-  smoke.draw(ctx);
+  /* Smoke that has risen past your head belongs behind it. Draw that part
+     into its own layer, punch your silhouette out of it, and lay it down
+     before the rest — so a plume climbing past your face goes behind you
+     while the one you have just blown stays in front. */
+  const mouth = mouthState();
+  const behindLine = mouth.y - mouth.r * 1.9;
+  const isBehind = p => p.y < behindLine;
+
+  if (opt.occlude && app.mask && mouth.real) {
+    if (layer.width !== (W >> 1) || layer.height !== (H >> 1)) {
+      layer.width = W >> 1; layer.height = H >> 1;
+    }
+    layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+    layerCtx.clearRect(0, 0, layer.width, layer.height);
+    smoke.draw(layerCtx, isBehind, 0.5);
+
+    layerCtx.globalCompositeOperation = 'destination-out';
+    layerCtx.save();
+    if (opt.mirror) { layerCtx.translate(layer.width, 0); layerCtx.scale(-1, 1); }
+    layerCtx.drawImage(app.mask, 0, 0, layer.width, layer.height);
+    layerCtx.restore();
+    layerCtx.globalCompositeOperation = 'source-over';
+
+    ctx.drawImage(layer, 0, 0, W, H);
+    smoke.draw(ctx, p => !isBehind(p));
+  } else {
+    smoke.draw(ctx);
+  }
 
   // ember light spill on top of the smoke
   for (const c of app.cigs) {
@@ -798,6 +957,9 @@ addEventListener('keyup', e => {
 $('panelToggle').onclick = () => $('panelBody').classList.toggle('open');
 $('optDensity').oninput = e => { opt.density = +e.target.value; };
 $('optSens').oninput = e => { opt.sens = +e.target.value; };
+$('optGrip').oninput = e => { opt.grip = +e.target.value; vision.pinchEase = opt.grip; };
+$('optSound').onchange = e => { opt.sound = e.target.checked; sound.setMuted(!opt.sound); };
+$('optOcclude').onchange = e => { opt.occlude = e.target.checked; };
 $('optSkeleton').onchange = e => { opt.skeleton = e.target.checked; };
 $('optMirror').onchange = e => { opt.mirror = vision.mirror = e.target.checked; };
 
@@ -830,6 +992,10 @@ async function start () {
 
     await vision.init(msg => { status.textContent = msg; });
     vision.mirror = opt.mirror;
+    vision.pinchEase = opt.grip;
+
+    sound.start();
+    sound.setMuted(!opt.sound);
 
     $('gate').classList.add('hide');
     setTimeout(() => { $('gate').style.display = 'none'; }, 500);
@@ -849,13 +1015,14 @@ async function start () {
 
 function frame (now) {
   if (!app.running) return;
-  const dt = Math.min(0.05, (now - app.last) / 1000) || 0.016;
+  const dt = Math.min(0.05, Math.max(0, (now - app.last) / 1000)) || 0.016;
   app.last = now;
   app.t += dt;
 
   const res = vision.detect(video, now);
   app.hands = res.hands || [];
   app.face = res.face || null;
+  app.mask = opt.occlude ? vision.segment(video, now) : null;
 
   step(dt);
   render(dt);
@@ -867,5 +1034,5 @@ addEventListener('resize', layoutTray);
 layoutTray();
 
 // debugging / kiosk helpers
-window.vapor = { app, opt, smoke, vision, start, toast, CIG_TYPES };
+window.vapor = { app, opt, smoke, vision, sound, start, toast, litTint, CIG_TYPES };
 if (new URLSearchParams(location.search).has('auto')) start();

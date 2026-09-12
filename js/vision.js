@@ -6,6 +6,7 @@ const VER = '0.10.14';
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VER}`;
 const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const SEG_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite';
 
 // landmark indices
 const WRIST = 0, THUMB_TIP = 4, INDEX_MCP = 5, INDEX_TIP = 8, MIDDLE_MCP = 9,
@@ -24,11 +25,16 @@ export const HAND_BONES = [
 ];
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+// depth is noisier than x/y, so it counts for less — but including it at all
+// stops a hand pointed at the camera from reading as an open one
+const dist3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z - b.z) * 0.6);
 
 export class Vision {
   constructor () {
     this.ready = false;
     this.mirror = true;
+    this.pinchEase = 0;      // raised by the settings slider to forgive a loose pinch
+    this._segAt = -1e9;
     this.lastTime = -1;
     this.hands = [];
     this.face = null;
@@ -63,6 +69,75 @@ export class Vision {
 
     this.ready = true;
     log('tracking ready');
+
+    /* The segmenter is what lets smoke pass behind you instead of painting
+       over your face. It is the least important of the three, so it loads
+       last and the app carries on perfectly well without it. */
+    try {
+      log('loading depth mask…');
+      this.segmenter = await tv.ImageSegmenter.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: SEG_MODEL, delegate: 'GPU' },
+        runningMode: 'VIDEO',
+        outputCategoryMask: true,
+        outputConfidenceMasks: false
+      });
+      this.maskCanvas = document.createElement('canvas');
+      this.maskCtx = this.maskCanvas.getContext('2d');
+      log('tracking ready');
+    } catch (e) {
+      console.warn('[vapor] segmenter unavailable, smoke will draw over you', e);
+      this.segmenter = null;
+    }
+  }
+
+  /**
+   * A canvas whose opaque pixels are you, in unmirrored video space.
+   * Returns null when segmentation is off or unavailable.
+   */
+  segment (video, tMs) {
+    if (!this.segmenter) return null;
+    // a person does not change shape in 16ms; 20Hz is plenty and frees the
+    // frame budget for everything else
+    if (tMs - this._segAt < 48) return this.maskReady ? this.maskCanvas : null;
+    this._segAt = tMs;
+    let mask = null;
+    try {
+      const res = this.segmenter.segmentForVideo(video, tMs);
+      mask = res?.categoryMask;
+      if (!mask) return this.maskReady ? this.maskCanvas : null;
+
+      /* The mask arrives at full video resolution, and walking a million
+         pixels in JS every frame costs more than everything else in the app
+         put together. It is only ever used as a soft silhouette, so sample it
+         on a stride into a quarter-size canvas — 16x less work, and the
+         coarser edge blurs into something that actually looks better. */
+      const w = mask.width, h = mask.height;
+      const STEP = 4;
+      const mw = Math.ceil(w / STEP), mh = Math.ceil(h / STEP);
+      if (this.maskCanvas.width !== mw || this.maskCanvas.height !== mh) {
+        this.maskCanvas.width = mw;
+        this.maskCanvas.height = mh;
+        this._img = this.maskCtx.createImageData(mw, mh);
+        const d = this._img.data;
+        for (let i = 0; i < d.length; i += 4) { d[i] = d[i + 1] = d[i + 2] = 0; }
+      }
+      const src = mask.getAsUint8Array();
+      const out = this._img.data;
+      let j = 3;
+      for (let y = 0; y < mh; y++) {
+        const row = Math.min(h - 1, y * STEP) * w;
+        for (let x = 0; x < mw; x++, j += 4) {
+          out[j] = src[row + Math.min(w - 1, x * STEP)] ? 255 : 0;
+        }
+      }
+      this.maskCtx.putImageData(this._img, 0, 0);
+      this.maskReady = true;
+      return this.maskCanvas;
+    } catch (e) {
+      return this.maskReady ? this.maskCanvas : null;
+    } finally {
+      if (mask && mask.close) mask.close();
+    }
   }
 
   /** Run detection for the current video frame. Returns { hands, face }. */
@@ -97,12 +172,13 @@ export class Vision {
       let side = res.handedness?.[i]?.[0]?.categoryName || 'Right';
       if (this.mirror) side = side === 'Right' ? 'Left' : 'Right';
 
-      const span = Math.max(0.04, dist(lm[WRIST], lm[MIDDLE_MCP]));
-      const pinchGap = dist(lm[THUMB_TIP], lm[INDEX_TIP]) / span;
+      const span = Math.max(0.04, dist3(lm[WRIST], lm[MIDDLE_MCP]));
+      const pinchGap = dist3(lm[THUMB_TIP], lm[INDEX_TIP]) / span;
 
       // hysteresis so a held pinch does not flicker
       const was = this._pinchState.get(side) || false;
-      const pinching = was ? pinchGap < 0.78 : pinchGap < 0.52;
+      const eng = 0.52 + this.pinchEase, rel = 0.80 + this.pinchEase;
+      const pinching = was ? pinchGap < rel : pinchGap < eng;
       this._pinchState.set(side, pinching);
 
       const px = (lm[THUMB_TIP].x + lm[INDEX_TIP].x) / 2;
@@ -119,11 +195,24 @@ export class Vision {
         if (dist(lm[TIPS[f]], lm[WRIST]) > dist(lm[PIPS[f]], lm[WRIST]) * 1.06) extended++;
       }
 
+      /* Nobody holds a cigarette in a thumb-and-index pinch — it sits clamped
+         between the index and middle fingers with the rest of the hand curled.
+         So either counts as a grip: a real pinch, or a hand that is not open.
+         Only splaying three fingers or more reads as letting go. */
+      const gripping = pinching || extended <= 2;
+
+      // where the cigarette sits in the hand, depending on which grip it is
+      const gx = pinching ? px : (lm[6].x + lm[10].x) / 2;
+      const gy = pinching ? py : (lm[6].y + lm[10].y) / 2;
+
       out.push({
         index: i, side, landmarks: lm, span,
         pinch: { x: px, y: py },
-        pinchStrength: Math.max(0, Math.min(1, 1 - (pinchGap - 0.35) / 0.75)),
+        pinchStrength: Math.max(0, Math.min(1,
+          Math.max(1 - (pinchGap - 0.35) / 0.75, gripping ? 0.55 : 0))),
         pinching,
+        gripping,
+        grab: { x: gx, y: gy },
         extended,
         open: extended / TIPS.length,   // 1 = flat open palm
         angle: ang,
@@ -161,13 +250,19 @@ export class Vision {
     const roll = Math.atan2(eyeB.y - eyeA.y, eyeB.x - eyeA.x);
     const scale = Math.max(0.05, dist(eyeA, eyeB));
 
+    /* Turn your head and the near eye swings away from your nose while the far
+       one closes in on it. The imbalance between those two distances is a
+       usable yaw without needing the full transform matrix out of the model. */
+    const dl = dist(nose, eyeA), dr = dist(nose, eyeB);
+    const yaw = Math.max(-1, Math.min(1, (dr - dl) / Math.max(1e-4, dr + dl) * 2.6));
+
     const jawOpen = bs.jawOpen ?? 0;
     const pucker = bs.mouthPucker ?? 0;
     const funnel = bs.mouthFunnel ?? 0;
     const cheekPuff = Math.max(bs.cheekPuff ?? 0, 0);
 
     return {
-      mouth, mouthW, openRatio, roll, scale,
+      mouth, mouthW, openRatio, roll, scale, yaw,
       nose, chin, corners: { left, right },
       jawOpen, pucker, funnel, cheekPuff,
       // "sucking" = lips tight / pursed, "blowing" = lips funnelled open
