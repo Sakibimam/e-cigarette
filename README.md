@@ -47,8 +47,15 @@ it burns to the filter and falls away.
 **Put any two fingertips together and reach in.** Whichever two — thumb and index, index
 and middle, thumb and pinky — the app looks at all ten pairs and takes whichever is closest
 to touching, then hands you the cigarette at that exact point. Which way your hand is
-facing makes no difference; it works at any rotation. Adjacent fingers have to close a
-little further than a thumb-and-finger pair, since they rest close together anyway.
+facing makes no difference; it works at any rotation.
+
+**Index and middle get their own handling**, because that is how people actually hold a
+cigarette. Hold those two straight out with the rest of your hand closed and it is read as
+a scissor grip: the cigarette is placed back between your fingers at the knuckles rather
+than out at the tips, and it lies **along** your fingers instead of drooping out of them —
+because there, the fingers are doing the holding, not gravity. Only one pinched at the
+fingertips hangs. Middle-and-ring and ring-and-pinky still have to close further than the
+rest, since nobody means those.
 
 A **ring marks the spot** the app is watching, tightening and turning amber as your fingers
 come together. If the cigarette will not come out, look at where that ring actually is

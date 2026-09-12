@@ -184,12 +184,14 @@ function holders (dt) {
     list.push({
       id: 'h:' + h.side,
       x: p.x, y: p.y,
-      angle: Math.atan2(p.y - w.y, p.x - w.x),
+      angle: h.holdAngle ?? Math.atan2(p.y - w.y, p.x - w.x),
+      scissor: h.scissor,
       pinching: h.pinching,               // two fingers deliberately together
       holding: h.gripping ?? h.pinching,   // that, or simply a hand not open
       strength: h.pinchStrength,
       fingers: h.fingers,
       open: h.open ?? 0,
+      openHand: !!h.openHand,
       tip: toPx(h.indexTip)
     });
   }
@@ -202,6 +204,7 @@ function holders (dt) {
       holding: app.pointer.down,
       strength: app.pointer.down ? 1 : 0,
       open: app.pointer.down ? 0 : 1,
+      openHand: !app.pointer.down,
       tip: { x: app.pointer.x, y: app.pointer.y }
     });
   }
@@ -279,7 +282,10 @@ function spawnCig (type, holder) {
 function placeHeld (cig, h, dt) {
   const L = cigDrawLength(cig);
   const back = L * 0.3;
-  const a = coalDown(h.angle, cig.angle);
+  // Clamped between two fingers it simply lies along them — that is what the
+  // fingers are doing. Only a cigarette pinched at the tips hangs, so only
+  // that one gets the droop.
+  const a = h.scissor ? h.angle : coalDown(h.angle, cig.angle);
   const tx = h.x - Math.cos(a) * back;
   const ty = h.y - Math.sin(a) * back;
   const k = 1 - Math.pow(0.0008, dt);     // critically smooth follow
@@ -417,7 +423,9 @@ function ashGestures () {
 function handleGrabs (m, dt) {
   for (const h of app.holders) {
     app.grabCool[h.id] = Math.max(0, (app.grabCool[h.id] || 0) - dt);
-    if (!h.pinching || app.grabCool[h.id] > 0) continue;
+    // a hand splayed wide is letting go, not reaching for something, even if
+    // two of its fingers happen to fall close enough to read as a pinch
+    if (!h.pinching || h.openHand || app.grabCool[h.id] > 0) continue;
     if (app.cigs.some(c => c.state === 'held' && c.holderId === h.id)) continue;
     {
       // 1. pick an existing cigarette back up (docked or free)
@@ -536,7 +544,7 @@ function step (dt) {
         if (cig.grip <= 0) releaseCig(cig, m, 'lost');
       } else {
         placeHeld(cig, h, dt);
-        if (h.open >= 0.72 && !h.pinching) {
+        if (h.openHand) {
           releaseCig(cig, m, 'open');
         } else if (h.holding) {
           cig.grip = GRIP_GRACE;

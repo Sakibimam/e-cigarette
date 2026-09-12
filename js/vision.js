@@ -20,9 +20,11 @@ const PIPS = [6, 10, 14, 18];
    together — which two is up to you, and so is which way your hand is facing. */
 const FINGERTIPS = [4, 8, 12, 16, 20];
 const FINGER_NAME = { 4: 'thumb', 8: 'index', 12: 'middle', 16: 'ring', 20: 'pinky' };
-// adjacent fingers rest close together, so they have to close further than a
-// thumb-and-finger pair before it counts as deliberate
-const NEIGHBOURS = new Set(['8,12', '12,16', '16,20']);
+/* Adjacent fingers rest close together, so closing them has to be more
+   deliberate before it counts — except index and middle, which is the grip
+   people actually hold a cigarette in, so that one gets no penalty at all. */
+const NEIGHBOURS = new Set(['12,16', '16,20']);
+const INDEX_DIP = 7, MIDDLE_DIP = 11;
 
 export const HAND_BONES = [
   [0,1],[1,2],[2,3],[3,4],
@@ -196,25 +198,41 @@ export class Vision {
         }
       }
 
+      const straight = f => dist(lm[TIPS[f]], lm[WRIST]) > dist(lm[PIPS[f]], lm[WRIST]) * 1.06;
       let extended = 0;
-      for (let f = 0; f < TIPS.length; f++) {
-        if (dist(lm[TIPS[f]], lm[WRIST]) > dist(lm[PIPS[f]], lm[WRIST]) * 1.06) extended++;
-      }
+      for (let f = 0; f < TIPS.length; f++) if (straight(f)) extended++;
+
+      /* The scissor hold: index and middle straight out with the cigarette
+         clamped between them. It is how most people hold one, and it wants
+         its own handling — the cigarette does not sit at the fingertips but
+         further back between the fingers, and it points along them rather
+         than away from the wrist. */
+      const vGap = dist3(lm[INDEX_TIP], lm[MIDDLE_TIP]) / span;
+      const scissor = straight(0) && straight(1) && vGap < 0.42 + this.pinchEase;
 
       /* Hysteresis, so a held pinch does not flicker. A splayed hand should
          not stay latched on through it — but the override has to check the
          gap too, because your index finger is extended when you pinch with it,
          and cancelling on extended fingers alone would kill the commonest
          pinch there is. */
+      /* Letting go needs its own reading rather than just "not gripping".
+         Index and middle are allowed to be a hair apart and still count as
+         holding, so the release has to be a deliberate splay: every finger
+         straight AND the two of them clearly parted. */
+      const openHand = extended >= 4 && vGap > 0.46;
+
       const was = this._pinchState.get(side) || false;
       const eng = 0.46 + this.pinchEase, rel = 0.70 + this.pinchEase;
-      const splayed = extended >= 4 && pinchGap > eng;
-      const pinching = splayed ? false : (was ? pinchGap < rel : pinchGap < eng);
+      const splayed = extended >= 4 && pinchGap > eng && !scissor;
+      const pinching = scissor || (splayed ? false : (was ? pinchGap < rel : pinchGap < eng));
       this._pinchState.set(side, pinching);
 
       // the cigarette is taken at the point between those two fingers
       const px = (lm[fa].x + lm[fb].x) / 2;
       const py = (lm[fa].y + lm[fb].y) / 2;
+      // ...or, in the scissor hold, back between the fingers where one sits
+      const sx = (lm[INDEX_DIP].x + lm[MIDDLE_DIP].x) / 2;
+      const sy = (lm[INDEX_DIP].y + lm[MIDDLE_DIP].y) / 2;
 
       // direction the held object should point: away from the wrist
       const ang = Math.atan2(py - lm[WRIST].y, px - lm[WRIST].x);
@@ -229,9 +247,16 @@ export class Vision {
       const gripping = pinching || extended <= 2;
 
       // where the cigarette sits in the hand, depending on which grip it is
-      const gx = pinching ? px : (lm[6].x + lm[10].x) / 2;
-      const gy = pinching ? py : (lm[6].y + lm[10].y) / 2;
-      const fingers = FINGER_NAME[fa] + '+' + FINGER_NAME[fb];
+      const gx = scissor ? sx : pinching ? px : (lm[6].x + lm[10].x) / 2;
+      const gy = scissor ? sy : pinching ? py : (lm[6].y + lm[10].y) / 2;
+      const fingers = scissor ? 'index|middle' : FINGER_NAME[fa] + '+' + FINGER_NAME[fb];
+
+      /* Held between two fingers a cigarette lies along them, not along the
+         line out from the wrist — so point it down the fingers instead. */
+      const holdAngle = scissor
+        ? Math.atan2((lm[INDEX_TIP].y + lm[MIDDLE_TIP].y) / 2 - lm[MIDDLE_MCP].y,
+                     (lm[INDEX_TIP].x + lm[MIDDLE_TIP].x) / 2 - lm[MIDDLE_MCP].x)
+        : Math.atan2(gy - lm[WRIST].y, gx - lm[WRIST].x);
 
       out.push({
         index: i, side, landmarks: lm, span,
@@ -242,6 +267,9 @@ export class Vision {
         pinching,
         gripping,
         fingers,
+        scissor,
+        openHand,
+        holdAngle,
         grab: { x: gx, y: gy },
         pinchPoint: { x: px, y: py },
         extended,
