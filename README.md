@@ -20,6 +20,59 @@ a secure origin; to use it from a phone or another machine you need real HTTPS.
 Then press **Enable camera**. First load downloads the three tracking models (~15 MB) from
 Google's CDN, so it needs a network connection the first time.
 
+## Putting it on the web
+
+There is no build step — it is static files — so Vercel serves the repo as it stands.
+
+```bash
+npx vercel          # preview
+npx vercel --prod   # live
+```
+
+Or point Vercel at the GitHub repo and let it deploy on push. When it asks for a framework,
+choose **Other**; leave the build command and output directory empty.
+
+`vercel.json` sets three things worth knowing about:
+
+- `Permissions-Policy: camera=(self)` — the camera is the whole app, so it is allowed
+  explicitly. Microphone and location are switched off, since nothing here uses them.
+- `Cache-Control: must-revalidate` on `js/` and `css/` — the filenames are not
+  content-hashed, so without it a deploy can leave people running a stale module against a
+  fresh page.
+- `cleanUrls`, so the site lives at `/` rather than `/index.html`.
+
+**HTTPS matters here.** `getUserMedia` only works on a secure origin, which Vercel gives
+you, and it is the reason the app can be opened on a phone at all — `localhost` only ever
+worked on the machine running it.
+
+### Who is visiting
+
+`index.html` loads Vercel **Web Analytics** and **Speed Insights** from `/_vercel/` on this
+same origin — no third-party script, no cookie banner to add. They only exist once you turn
+them on for the project (Vercel dashboard → your project → Analytics, and → Speed Insights);
+until you do, both requests 404 and `js/analytics.js` quietly does nothing, which is also
+what happens on localhost.
+
+Alongside page views, the app reports a few anonymous events of its own:
+
+| event | when | what it carries |
+|---|---|---|
+| `camera` | the permission prompt is answered | `granted`, `denied` or `failed` |
+| `tracking_ready` | the models finish loading | load time to the nearest 100ms, whether the segmenter made it |
+| `lit` | the first time a kind of cigarette is tried | which one |
+| `session` | the tab is hidden or closed | seconds, and counts of cigarettes, draws, exhales, nose exhales and ash flicks |
+
+Counts are rolled into that one `session` event rather than sent per puff, so a long session
+is a handful of requests rather than hundreds.
+
+**None of this touches the camera.** No frame, no landmark, no image, and no measurement of
+anyone's face or hands ever leaves the browser — the video is read, used and discarded
+inside the page. What is sent is what is in the table above and nothing else, and
+**Anonymous usage stats** in the settings panel turns even that off.
+
+One thing to expect: Vercel counts page views and visitors on every plan, but these custom
+events need a Pro plan. On Hobby you will see the traffic and not the events.
+
 ## How to smoke
 
 | step | what you do | what happens |

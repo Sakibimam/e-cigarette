@@ -3,6 +3,7 @@
 
 import { Vision, HAND_BONES } from './vision.js';
 import { SmokeSystem } from './smoke.js';
+import { analytics } from './analytics.js';
 import { CIG_TYPES, MAX_LEN, drawCigarette, cigTip, cigLength, cigDrawLength, roundRect } from './cigarettes.js';
 
 const $ = id => document.getElementById(id);
@@ -387,6 +388,7 @@ function knockAsh (cig, msg) {
 
   cig.ash = 0;
   cig.ashCool = 0.45;
+  analytics.ashed();
   if (msg) toast(msg);
   return true;
 }
@@ -455,6 +457,7 @@ function handleGrabs (m, dt) {
           if (c) {
             app.flash[slot.i] = 1;
             app.grabCool[h.id] = 0.65;
+            analytics.lit(slot.type.id);
             toast(`${slot.type.name} — bring it to your lips`);
           } else {
             toast('both hands full');
@@ -580,12 +583,14 @@ function step (dt) {
     cig.ember = lerp(cig.ember, cig.emberTarget, 1 - Math.pow(0.02, dt));
 
     if (inhaling) {
+      if (!cig.drawing) { cig.drawing = true; analytics.puff(); }
       app.lung.charge = clamp(app.lung.charge + intensity * 0.62 * dt);
       app.lung.type = t;
       cig.burn = clamp(cig.burn + t.burnRate * (0.5 + intensity * 1.8) * dt);
       // roughly three or four decent drags builds a full head of ash
       cig.ash = Math.min(1.3, cig.ash + intensity * (t.ashRate ?? 0.24) * dt);
     } else if (cig.lit && cig.state !== 'dropped') {
+      cig.drawing = false;
       cig.burn = clamp(cig.burn + t.idleBurn * dt);
     }
 
@@ -634,6 +639,7 @@ function step (dt) {
     if (blowing) {
       const power = clamp(openOver);
       anyExhale = power;
+      if (app.blowT === 0) analytics.exhale();
       app.blowT += dt;
       // you blow hardest at the start: a fast narrow jet that decays into a
       // slow, wide, buoyant plume as your lungs empty
@@ -671,6 +677,7 @@ function step (dt) {
     const noseBlow = !app.cigAtMouth && !blowing && app.lung.charge > 0.12 &&
                      m.real && m.open < 0.12 && m.suck < 0.2;
     if (noseBlow) {
+      if (app.nosing === 0) analytics.nose();
       const drain = Math.min(app.lung.charge, dt * 0.3);
       app.lung.charge -= drain;
       app.nosing += t.puffCount * drain * 2.6 * opt.density;
@@ -1003,6 +1010,7 @@ $('optDensity').oninput = e => { opt.density = +e.target.value; };
 $('optSens').oninput = e => { opt.sens = +e.target.value; };
 $('optGrip').oninput = e => { opt.grip = +e.target.value; vision.pinchEase = opt.grip; };
 $('optOcclude').onchange = e => { opt.occlude = e.target.checked; };
+$('optStats').onchange = e => { analytics.on = e.target.checked; };
 $('optSkeleton').onchange = e => { opt.skeleton = e.target.checked; };
 $('optMirror').onchange = e => { opt.mirror = vision.mirror = e.target.checked; };
 
@@ -1014,6 +1022,7 @@ async function start () {
   btn.disabled = true;
   status.classList.remove('err');
 
+  const t0 = performance.now();
   try {
     status.textContent = 'requesting camera…';
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -1033,7 +1042,9 @@ async function start () {
     $('frame').style.aspectRatio = `${app.W} / ${app.H}`;
     layoutTray();
 
+    analytics.camera('granted');
     await vision.init(msg => { status.textContent = msg; });
+    analytics.ready(performance.now() - t0, vision.segmenter);
     vision.mirror = opt.mirror;
     vision.pinchEase = opt.grip;
 
@@ -1045,6 +1056,7 @@ async function start () {
     toast('pinch a cigarette from the right');
   } catch (err) {
     console.error('[vapor]', err);
+    analytics.camera(err.name === 'NotAllowedError' ? 'denied' : 'failed');
     btn.disabled = false;
     status.classList.add('err');
     status.textContent = err.name === 'NotAllowedError'
@@ -1077,10 +1089,11 @@ function frame (now) {
   requestAnimationFrame(frame);
 }
 
+analytics.init();
 $('startBtn').onclick = start;
 addEventListener('resize', layoutTray);
 layoutTray();
 
 // debugging / kiosk helpers
-window.vapor = { app, opt, smoke, vision, start, toast, litTint, CIG_TYPES };
+window.vapor = { app, opt, smoke, vision, analytics, start, toast, litTint, CIG_TYPES };
 if (new URLSearchParams(location.search).has('auto')) start();
